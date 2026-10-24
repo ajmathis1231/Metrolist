@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.security.MessageDigest
 import java.util.Properties
 
 val localProperties = Properties()
@@ -73,10 +74,10 @@ android {
         }
         val kidsParentPinHash =
             kidsParentPin?.let { pin ->
-                java.security.MessageDigest
+                MessageDigest
                     .getInstance("SHA-256")
                     .digest("kids-music:$pin".toByteArray())
-                    .joinToString("") { "%02x".format(it) }
+                    .joinToString("") { byte -> "%02x".format(byte) }
             } ?: ""
         buildConfigField("String", "KIDS_PARENT_PIN_HASH", "\"$kidsParentPinHash\"")
     }
