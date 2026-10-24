@@ -58,16 +58,12 @@ jobs:
           set -o pipefail
           ./gradlew --console=plain :app:assembleFossRelease -x lint -x lintVitalFossRelease 2>&1 | tee build.log
 
-      - name: Report compiler errors
+      - name: Report build errors
         if: failure() && steps.build.outcome == 'failure'
         shell: bash
         run: |
-          grep -E '^e: ' build.log | head -50 | while IFS= read -r line; do
-            echo "::error::${line}"
-          done
-          grep -E 'What went wrong' -A 12 build.log | head -40 | while IFS= read -r line; do
-            echo "::error::${line}"
-          done
+          { grep -E '^e: |What went wrong|FAILURE|Could not|error:' -A 6 build.log || tail -n 40 build.log; } \
+            | head -60 | while IFS= read -r line; do echo "::error::${line}"; done
 
       - name: Sign APK
         shell: bash
