@@ -62,7 +62,6 @@
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <action android:name="android.intent.action.VIEW" />
                 <action android:name="android.intent.action.MUSIC_PLAYER" />
 
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
@@ -70,92 +69,8 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
-            <!-- Music Recognizer Widget: open recognition / recognition_history screen -->
-            <intent-filter>
-                <action android:name="com.metrolist.music.action.RECOGNITION" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-
-            <!-- Listen Together invite link -->
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:scheme="https" />
-                <data android:host="metrolist.cc" />
-                <data android:pathPrefix="/listen" />
-            </intent-filter>
-
-            <!-- Youtube filter -->
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
-                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:host="youtube.com" />
-                <data android:host="m.youtube.com" />
-                <data android:host="www.youtube.com" />
-                <data android:host="music.youtube.com" />
-                <!-- video prefix -->
-                <data android:pathPrefix="/v/" />
-                <data android:pathPrefix="/embed/" />
-                <data android:pathPrefix="/watch" />
-                <!-- channel prefix -->
-                <data android:pathPrefix="/channel/" />
-                <data android:pathPrefix="/user/" />
-                <data android:pathPrefix="/c/" />
-                <!-- playlist prefix -->
-                <data android:pathPrefix="/playlist" />
-                <!-- browse prefix -->
-                <data android:pathPrefix="/browse/" />
-                <!-- search prefix -->
-                <data android:pathPrefix="/search" />
-            </intent-filter>
-
-            <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
-                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:scheme="http" />
-                <data android:scheme="https" />
-                <data android:host="youtu.be" />
-                <data android:pathPrefix="/" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
-                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-
-                <data android:scheme="vnd.youtube" />
-                <data android:scheme="vnd.youtube.launch" />
-            </intent-filter>
-
-            <!-- Share filter -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-
-                <category android:name="android.intent.category.DEFAULT" />
-
-                <data android:mimeType="text/plain" />
-            </intent-filter>
-
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
+            <!-- Kids build: no link, share, voice-search or shortcut entry points. The app
+                 only opens to the approved playlists. -->
         </activity>
 
         <!-- Legacy launcher alias kept for upgrade compatibility.
@@ -305,19 +220,6 @@
         </receiver>
 
 
-        <!-- Playlist Widget -->
-        <receiver
-            android:name=".widget.PlaylistWidgetReceiver"
-            android:exported="true"
-            android:label="@string/widget_playlists">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/playlist_widget_info" />
-        </receiver>
 
         <!-- Turntable Widget -->
         <receiver
@@ -341,39 +243,12 @@
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
             android:value="com.metrolist.music.cast.CastOptionsProvider" />
 
-        <!-- Music Recognizer Widget -->
-        <receiver
-            android:name=".widget.MusicRecognizerWidgetReceiver"
-            android:exported="true"
-            android:label="@string/widget_recognizer_name">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="com.metrolist.music.widget.recognizer.TAP_MIC" />
-                <action android:name="com.metrolist.music.widget.recognizer.UPDATE" />
-                <action android:name="com.metrolist.music.widget.recognizer.RESET" />
-            </intent-filter>
-
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/recognizer_widget_info" />
-        </receiver>
 
         <service
             android:name=".recognition.RecognitionForegroundService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
-        <!-- Music Recognizer Quick Settings Tile -->
-        <service
-            android:name=".quicksettings.MusicRecognizerTileService"
-            android:label="@string/qs_tile_music_recognizer"
-            android:icon="@drawable/mic"
-            android:exported="true"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
 
     </application>
 

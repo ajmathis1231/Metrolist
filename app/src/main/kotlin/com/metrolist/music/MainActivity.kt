@@ -57,6 +57,7 @@ import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
@@ -198,6 +199,7 @@ import com.metrolist.music.ui.screens.settings.NavigationTab
 import com.metrolist.music.ui.theme.ColorSaver
 import com.metrolist.music.ui.theme.DefaultThemeColor
 import com.metrolist.music.ui.theme.MetrolistTheme
+import com.metrolist.music.kids.KidsApp
 import com.metrolist.music.ui.theme.extractThemeColor
 import com.metrolist.music.ui.utils.appBarScrollBehavior
 import com.metrolist.music.ui.utils.resetHeightOffset
@@ -273,6 +275,9 @@ class MainActivity : FragmentActivity() {
     private var playerConnectionSnapshot by mutableStateOf<PlayerConnection?>(null)
 
     private var isServiceBound = false
+
+    // Full app is shown only after the parent PIN; it re-locks whenever the app leaves the screen.
+    private var parentMode by mutableStateOf(false)
 
     private val serviceConnection =
         object : ServiceConnection {
@@ -351,6 +356,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onStop() {
+        parentMode = false
         // Keep the service binding, PlayerConnection and Listen Together wiring alive while
         // the Activity is backgrounded. The MusicService is a foreground service and keeps
         // running, so the host must keep reporting playback state to the LT server; detaching
@@ -381,6 +387,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (!parentMode) return
         if (::navController.isInitialized) {
             handleWidgetTargetIntent(intent, navController)
             handleDeepLinkIntent(intent, navController)
@@ -469,14 +476,38 @@ class MainActivity : FragmentActivity() {
         }
 
         setContent {
-            MetrolistApp(
-                latestVersionName = latestVersionName,
-                onLatestVersionNameChange = { latestVersionName = it },
-                playerConnection = playerConnectionSnapshot,
-                database = database,
-                downloadUtil = downloadUtil,
-                syncUtils = syncUtils,
-            )
+            if (parentMode) {
+                Box(Modifier.fillMaxSize()) {
+                    MetrolistApp(
+                        latestVersionName = latestVersionName,
+                        onLatestVersionNameChange = { latestVersionName = it },
+                        playerConnection = playerConnectionSnapshot,
+                        database = database,
+                        downloadUtil = downloadUtil,
+                        syncUtils = syncUtils,
+                    )
+                    FilledTonalButton(
+                        onClick = { parentMode = false },
+                        modifier =
+                            Modifier
+                                .align(Alignment.TopCenter)
+                                .windowInsetsPadding(WindowInsets.systemBars)
+                                .padding(top = 8.dp),
+                    ) {
+                        Icon(painterResource(R.drawable.lock), contentDescription = null, modifier = Modifier.size(18.dp))
+                        Text(stringResource(R.string.kids_exit_parent_mode), modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+            } else {
+                val isDark = isSystemInDarkTheme()
+                LaunchedEffect(isDark) { setSystemBarAppearance(isDark) }
+                MetrolistTheme(darkTheme = isDark) {
+                    KidsApp(
+                        playerConnection = playerConnectionSnapshot,
+                        onUnlockParentMode = { parentMode = true },
+                    )
+                }
+            }
         }
     }
 

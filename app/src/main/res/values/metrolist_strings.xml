@@ -994,4 +994,26 @@
     <string name="stream_source_web_creator_desc">Creator web client.</string>
     <string name="top_result">Top result</string>
     <string name="other">Other</string>
+
+    <!-- Kids mode -->
+    <string name="kids_my_music">My Music</string>
+    <string name="kids_parent_mode">Parent mode</string>
+    <string name="kids_exit_parent_mode">Lock</string>
+    <string name="kids_ask_parent_setup">Ask a parent to set up this app.</string>
+    <string name="kids_load_error">Couldn\'t load the music. Check the internet connection and try again.</string>
+    <string name="kids_no_playlists">No playlists yet. Ask a parent to add some.</string>
+    <string name="kids_retry">Try again</string>
+    <string name="kids_shuffle">Shuffle</string>
+    <string name="kids_song_count">%d songs</string>
+    <string name="kids_create_pin_title">Create a parent PIN</string>
+    <string name="kids_create_pin_desc">This PIN unlocks the full app. Choose 4 to 8 digits your child doesn\'t know.</string>
+    <string name="kids_enter_pin_desc">Enter the parent PIN to unlock the full app.</string>
+    <string name="kids_pin">PIN</string>
+    <string name="kids_confirm_pin">Confirm PIN</string>
+    <string name="kids_pin_mismatch">The PINs don\'t match.</string>
+    <string name="kids_wrong_pin">Wrong PIN.</string>
+    <string name="kids_too_many_attempts">Too many tries. Wait a minute and try again.</string>
+    <string name="kids_unlock">Unlock</string>
+    <string name="kids_cancel">Cancel</string>
+    <string name="kids_now_playing">Now playing</string>
 </resources>

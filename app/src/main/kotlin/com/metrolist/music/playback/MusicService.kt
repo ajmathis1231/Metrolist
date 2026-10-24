@@ -143,6 +143,7 @@ import com.metrolist.music.constants.HistoryDuration
 import com.metrolist.music.constants.LastFMUseNowPlaying
 import com.metrolist.music.constants.MediaSessionConstants
 import com.metrolist.music.constants.MediaSessionConstants.CommandAddToTargetPlaylist
+import com.metrolist.music.kids.KIDS_LOCKDOWN
 import com.metrolist.music.constants.MediaSessionConstants.CommandToggleLike
 import com.metrolist.music.constants.MediaSessionConstants.CommandToggleRepeatMode
 import com.metrolist.music.constants.MediaSessionConstants.CommandToggleShuffle
@@ -1643,20 +1644,8 @@ class MusicService :
                         },
                     ).setSessionCommand(CommandToggleRepeatMode)
                     .build(),
-                CommandButton
-                    .Builder()
-                    .setDisplayName(getString(R.string.start_radio))
-                    .setIconResId(R.drawable.radio)
-                    .setSessionCommand(CommandToggleStartRadio)
-                    .setEnabled(currentSong.value != null)
-                    .build(),
-                CommandButton
-                    .Builder()
-                    .setDisplayName(getString(R.string.android_auto_target_playlist))
-                    .setIconResId(R.drawable.playlist_add)
-                    .setSessionCommand(CommandAddToTargetPlaylist)
-                    .setEnabled(currentSong.value != null)
-                    .build(),
+                // Kids build: no "start radio" or "add to playlist" buttons — radio would pull
+                // in songs from outside the approved playlists.
             ),
         )
     }
@@ -1868,6 +1857,8 @@ class MusicService :
     }
 
     fun startRadioSeamlessly() {
+        // Kids build: radio adds songs outside the parent-approved playlists.
+        if (KIDS_LOCKDOWN) return
         if (!playerInitialized.value) {
             Timber.tag(TAG).w("startRadioSeamlessly called before player initialization")
             return
@@ -1963,6 +1954,7 @@ class MusicService :
     }
 
     fun getAutomix(playlistId: String) {
+        if (KIDS_LOCKDOWN) return
         if (dataStore.get(SimilarContent, true) &&
             !(dataStore.get(DisableLoadMoreWhenRepeatAllKey, false) && player.repeatMode == REPEAT_MODE_ALL)
         ) {

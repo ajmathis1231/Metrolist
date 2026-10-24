@@ -1,0 +1,117 @@
+name: Build Kids Music APK
+
+# Builds the locked-down kids app and attaches a signed APK to the run (and to a
+# "kids-latest" release, so it is easy to grab from a phone).
+#
+# Repository secrets used:
+#   KIDS_KEYSTORE_BASE64   base64 of the signing keystore (keep the same one forever,
+#                          or Android will refuse to install updates over the old app)
+#   KIDS_KEYSTORE_PASSWORD password for that keystore and its key
+#   KIDS_KEY_ALIAS         key alias inside the keystore (defaults to "kids")
+#   KIDS_PARENT_PIN        optional 4-8 digit parent PIN baked into the app
+#
+# Without the keystore secrets the APK is signed with a throwaway key: it installs,
+# but each new build has to be uninstalled/reinstalled (and signed in again).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main", "kids-mode"]
+    paths-ignore:
+      - "**.md"
+      - "fastlane/**"
+      - "assets/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Kids Music
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build release APK
+        id: build
+        shell: bash
+        env:
+          KIDS_PARENT_PIN: ${{ secrets.KIDS_PARENT_PIN }}
+          PULL_REQUEST: "false"
+        run: |
+          chmod +x gradlew
+          set -o pipefail
+          ./gradlew --console=plain :app:assembleFossRelease -x lint -x lintVitalFossRelease 2>&1 | tee build.log
+
+      - name: Report compiler errors
+        if: failure() && steps.build.outcome == 'failure'
+        shell: bash
+        run: |
+          grep -E '^e: ' build.log | head -50 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+          grep -E 'What went wrong' -A 12 build.log | head -40 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+
+      - name: Sign APK
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.KIDS_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KIDS_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KIDS_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          UNSIGNED=$(find app/build/outputs/apk -name '*release*.apk' | head -n 1)
+          echo "Unsigned APK: $UNSIGNED"
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > kids.keystore
+            ALIAS="${KEY_ALIAS:-kids}"
+            PASS="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::No KIDS_KEYSTORE_BASE64 secret. Signing with a throwaway key; future builds will not install as updates."
+            PASS=throwaway
+            ALIAS=kids
+            keytool -genkeypair -keystore kids.keystore -storepass "$PASS" -keypass "$PASS" \
+              -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Kids Music"
+          fi
+          mkdir -p out
+          "$BUILD_TOOLS/apksigner" sign --ks kids.keystore --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
+            --ks-key-alias "$ALIAS" --out out/kids-music.apk "$UNSIGNED"
+          "$BUILD_TOOLS/apksigner" verify out/kids-music.apk
+          rm -f kids.keystore
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kids-music
+          path: out/kids-music.apk
+
+      - name: Publish to kids-latest release
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete kids-latest --yes --cleanup-tag || true
+          gh release create kids-latest out/kids-music.apk \
+            --title "Kids Music (latest build)" \
+            --notes "Built from ${GITHUB_REF_NAME} at ${GITHUB_SHA}." \
+            --target "${GITHUB_SHA}" \
+            --prerelease

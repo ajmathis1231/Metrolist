@@ -44,6 +44,7 @@ import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.Song
 import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.extensions.toggleRepeatMode
+import com.metrolist.music.kids.KIDS_LOCKDOWN
 import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.ArtistNameAliases
@@ -100,11 +101,9 @@ constructor(
             connectionResult.availableSessionCommands
                 .buildUpon()
                 .add(MediaSessionConstants.CommandToggleLike)
-                .add(MediaSessionConstants.CommandToggleStartRadio)
                 .add(MediaSessionConstants.CommandToggleLibrary)
                 .add(MediaSessionConstants.CommandToggleShuffle)
                 .add(MediaSessionConstants.CommandToggleRepeatMode)
-                .add(MediaSessionConstants.CommandAddToTargetPlaylist)
                 .build(),
             connectionResult.availablePlayerCommands,
         )
@@ -118,13 +117,13 @@ constructor(
     ): ListenableFuture<SessionResult> {
         when (customCommand.customAction) {
             MediaSessionConstants.ACTION_TOGGLE_LIKE -> toggleLike()
-            MediaSessionConstants.ACTION_TOGGLE_START_RADIO -> toggleStartRadio()
+            MediaSessionConstants.ACTION_TOGGLE_START_RADIO -> if (!KIDS_LOCKDOWN) toggleStartRadio()
             MediaSessionConstants.ACTION_TOGGLE_LIBRARY -> toggleLibrary()
             MediaSessionConstants.ACTION_TOGGLE_SHUFFLE -> session.player.shuffleModeEnabled =
                 !session.player.shuffleModeEnabled
 
             MediaSessionConstants.ACTION_TOGGLE_REPEAT_MODE -> session.player.toggleRepeatMode()
-            MediaSessionConstants.ACTION_ADD_TO_TARGET_PLAYLIST -> addToTargetPlaylist()
+            MediaSessionConstants.ACTION_ADD_TO_TARGET_PLAYLIST -> if (!KIDS_LOCKDOWN) addToTargetPlaylist()
         }
         return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
     }
@@ -183,6 +182,7 @@ constructor(
         params: MediaLibraryService.LibraryParams?,
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
         scope.future(Dispatchers.IO) {
+            if (KIDS_LOCKDOWN) return@future LibraryResult.ofItemList(emptyList(), params)
             try {
                 loadLocalChildren(parentId, page, pageSize)?.let { children ->
                     return@future LibraryResult.ofItemList(children, params)
@@ -558,7 +558,7 @@ constructor(
         params: MediaLibraryService.LibraryParams?
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
         return scope.future(Dispatchers.IO) {
-            if (query.isEmpty()) {
+            if (KIDS_LOCKDOWN || query.isEmpty()) {
                 return@future LibraryResult.ofItemList(emptyList(), params)
             }
 
@@ -646,6 +646,8 @@ constructor(
     ): ListenableFuture<MediaItemsWithStartPosition> =
         scope.future(Dispatchers.IO) {
             val defaultResult = MediaItemsWithStartPosition(emptyList(), startIndex, startPositionMs)
+            // Other apps (voice assistants, Android Auto, controllers) can't start arbitrary music.
+            if (KIDS_LOCKDOWN && controller.packageName != context.packageName) return@future defaultResult
             val voiceQuery = mediaItems.firstOrNull()?.requestMetadata?.searchQuery
 
             val path = if (!voiceQuery.isNullOrBlank()) {

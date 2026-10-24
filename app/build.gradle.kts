@@ -7,7 +7,7 @@ if (localPropertiesFile.exists()) {
     localProperties.load(localPropertiesFile.inputStream())
 }
 
-val baseApplicationId = "com.metrolist.music"
+val baseApplicationId = "com.metrolist.kids"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }
 val appNameOverride = System.getenv("METROLIST_APP_NAME")?.takeIf { it.isNotBlank() }
 val buildCommit =
@@ -45,7 +45,7 @@ android {
         val baseVersionName = requireNotNull(versionName)
         buildConfigField("String", "BASE_VERSION_NAME", "\"$baseVersionName\"")
         buildCommit?.let { versionName = "$baseVersionName+$it" }
-        resValue("string", "app_name", appNameOverride ?: "Metrolist")
+        resValue("string", "app_name", appNameOverride ?: "Kids Music")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -62,6 +62,23 @@ android {
         buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
         buildConfigField("String", "ARCHITECTURE", "\"universal\"")
         buildConfigField("Long", "DISCORD_APP_ID", "1447278780795064401L")
+
+        // Optional parent PIN baked into the APK (survives "Clear data" on the phone).
+        val kidsParentPin =
+            (localProperties.getProperty("KIDS_PARENT_PIN") ?: System.getenv("KIDS_PARENT_PIN"))
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+        require(kidsParentPin == null || kidsParentPin.matches(Regex("\\d{4,8}"))) {
+            "KIDS_PARENT_PIN must be 4 to 8 digits"
+        }
+        val kidsParentPinHash =
+            kidsParentPin?.let { pin ->
+                java.security.MessageDigest
+                    .getInstance("SHA-256")
+                    .digest("kids-music:$pin".toByteArray())
+                    .joinToString("") { "%02x".format(it) }
+            } ?: ""
+        buildConfigField("String", "KIDS_PARENT_PIN_HASH", "\"$kidsParentPinHash\"")
     }
 
     flavorDimensions += listOf("variant")
@@ -71,14 +88,14 @@ android {
             dimension = "variant"
             isDefault = true
             buildConfigField("Boolean", "CAST_AVAILABLE", "false")
-            buildConfigField("Boolean", "UPDATER_AVAILABLE", "true")
+            buildConfigField("Boolean", "UPDATER_AVAILABLE", "false") // Kids build: never offer upstream Metrolist updates
         }
 
         // GMS - Updater and gcast
         create("gms") {
             dimension = "variant"
             buildConfigField("Boolean", "CAST_AVAILABLE", "true")
-            buildConfigField("Boolean", "UPDATER_AVAILABLE", "true")
+            buildConfigField("Boolean", "UPDATER_AVAILABLE", "false") // Kids build: never offer upstream Metrolist updates
         }
 
         // IzzyOnDroid - no gcast, no updater - the ONLY F-droid compliant build
@@ -133,7 +150,7 @@ android {
             }
             isDebuggable = true
             if (appNameOverride == null) {
-                resValue("string", "app_name", "Metrolist Debug")
+                resValue("string", "app_name", "Kids Music Debug")
             }
             signingConfig =
                 if (workflowDebugKeystoreFile != null) {
