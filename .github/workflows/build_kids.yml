@@ -56,7 +56,7 @@ jobs:
         run: |
           chmod +x gradlew
           set -o pipefail
-          ./gradlew --console=plain :app:assembleFossRelease -x lint -x lintVitalFossRelease 2>&1 | tee build.log
+          ./gradlew --console=plain :app:assembleFossRelease 2>&1 | tee build.log
 
       - name: Report build errors
         if: failure() && steps.build.outcome == 'failure'
