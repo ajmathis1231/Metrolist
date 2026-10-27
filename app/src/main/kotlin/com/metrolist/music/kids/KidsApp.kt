@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
@@ -32,11 +33,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
@@ -46,10 +52,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -69,6 +78,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -92,7 +103,8 @@ import kotlinx.coroutines.launch
 
 /**
  * The only UI a child sees: the playlists saved in the signed-in account, their songs,
- * and basic playback controls. No search, history, video, queue editing or settings.
+ * basic playback controls, and playlists the child makes from those songs. No search, history,
+ * video, queue editing or settings.
  */
 @Composable
 fun KidsApp(
@@ -103,6 +115,19 @@ fun KidsApp(
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val playlist by viewModel.playlist.collectAsState()
+    val ownIds by viewModel.ownPlaylistIds.collectAsState()
+    val busy by viewModel.busy.collectAsState()
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(viewModel) {
+        viewModel.messages.collect { message ->
+            snackbarHostState.currentSnackbarData?.dismiss()
+            snackbarHostState.showSnackbar(
+                if (message.arg != null) context.getString(message.resId, message.arg) else context.getString(message.resId),
+            )
+        }
+    }
 
     val emptyMetadata = remember { MutableStateFlow<MediaMetadata?>(null) }
     val mediaMetadata by (playerConnection?.mediaMetadata ?: emptyMetadata).collectAsState()
@@ -111,6 +136,11 @@ fun KidsApp(
     var openPlaylistTitle by rememberSaveable { mutableStateOf("") }
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showParentGate by remember { mutableStateOf(false) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var songToAdd by remember { mutableStateOf<SongItem?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val ownPlaylists =
+        (playlists as? LoadState.Ready)?.value.orEmpty().filter { it.id in ownIds }
 
     LaunchedEffect(openPlaylistId) {
         openPlaylistId?.let(viewModel::openPlaylist)
@@ -138,17 +168,24 @@ fun KidsApp(
                         isLoggedIn = isLoggedIn,
                         state = playlists,
                         onRetry = viewModel::loadPlaylists,
+                        ownIds = ownIds,
                         onOpen = {
                             openPlaylistTitle = it.title
                             openPlaylistId = it.id
                         },
+                        onCreate = { showCreateDialog = true },
                         onParentMode = { showParentGate = true },
                     )
                 } else {
+                    val isOwn = currentId in ownIds
                     PlaylistScreen(
                         title = openPlaylistTitle,
                         state = playlist,
+                        isOwn = isOwn,
                         currentSongId = mediaMetadata?.id,
+                        onAddSong = { songToAdd = it },
+                        onRemoveSong = { viewModel.removeSong(currentId, it) },
+                        onDelete = { confirmDelete = true },
                         onBack = { openPlaylistId = null },
                         onRetry = { viewModel.openPlaylist(currentId, forceReload = true) },
                         onPlay = { page, index, shuffle ->
@@ -181,6 +218,68 @@ fun KidsApp(
                     onClose = { showNowPlaying = false },
                 )
             }
+        }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier =
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(bottom = if (mediaMetadata != null && !showNowPlaying) 80.dp else 0.dp),
+        )
+
+        if (showCreateDialog) {
+            CreatePlaylistDialog(
+                busy = busy,
+                onDismiss = { showCreateDialog = false },
+                onCreate = { name ->
+                    viewModel.createPlaylist(name)
+                    showCreateDialog = false
+                },
+            )
+        }
+
+        songToAdd?.let { song ->
+            AddToPlaylistDialog(
+                song = song,
+                playlists = ownPlaylists.filterNot { it.id == openPlaylistId },
+                busy = busy,
+                onDismiss = { songToAdd = null },
+                onPick = { target ->
+                    viewModel.addSong(target.id, target.title, song)
+                    songToAdd = null
+                },
+                onCreateWithSong = { name ->
+                    viewModel.createPlaylist(name, firstSong = song)
+                    songToAdd = null
+                },
+            )
+        }
+
+        val deletingId = openPlaylistId
+        if (confirmDelete && deletingId != null) {
+            AlertDialog(
+                onDismissRequest = { confirmDelete = false },
+                icon = { Icon(painterResource(R.drawable.delete), contentDescription = null) },
+                title = { Text(stringResource(R.string.kids_delete_playlist)) },
+                text = { Text(stringResource(R.string.kids_delete_playlist_confirm, openPlaylistTitle)) },
+                confirmButton = {
+                    TextButton(
+                        enabled = !busy,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        onClick = {
+                            confirmDelete = false
+                            viewModel.deletePlaylist(deletingId, openPlaylistTitle) {
+                                if (openPlaylistId == deletingId) openPlaylistId = null
+                            }
+                        },
+                    ) { Text(stringResource(R.string.kids_delete)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.kids_cancel)) }
+                },
+            )
         }
 
         if (showParentGate) {
@@ -292,55 +391,72 @@ private fun Loading() {
 private fun PlaylistsScreen(
     isLoggedIn: Boolean?,
     state: LoadState<List<PlaylistItem>>,
+    ownIds: Set<String>,
     onRetry: () -> Unit,
     onOpen: (PlaylistItem) -> Unit,
+    onCreate: () -> Unit,
     onParentMode: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize()) {
-        TopBar(
-            title = stringResource(R.string.kids_my_music),
-            actions = {
-                if (isLoggedIn == true) {
-                    IconButton(onClick = onRetry) {
-                        Icon(painterResource(R.drawable.refresh), contentDescription = stringResource(R.string.kids_retry))
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            TopBar(
+                title = stringResource(R.string.kids_my_music),
+                actions = {
+                    if (isLoggedIn == true) {
+                        IconButton(onClick = onRetry) {
+                            Icon(painterResource(R.drawable.refresh), contentDescription = stringResource(R.string.kids_retry))
+                        }
                     }
-                }
-                IconButton(onClick = onParentMode) {
-                    Icon(painterResource(R.drawable.lock), contentDescription = stringResource(R.string.kids_parent_mode))
-                }
-            },
-        )
+                    IconButton(onClick = onParentMode) {
+                        Icon(painterResource(R.drawable.lock), contentDescription = stringResource(R.string.kids_parent_mode))
+                    }
+                },
+            )
 
-        when {
-            isLoggedIn == null -> Loading()
-            isLoggedIn == false -> CenteredMessage(stringResource(R.string.kids_ask_parent_setup), R.drawable.account)
-            state is LoadState.Loading -> Loading()
-            state is LoadState.Error ->
-                CenteredMessage(
-                    text = stringResource(R.string.kids_load_error),
-                    iconRes = R.drawable.error,
-                    actionLabel = stringResource(R.string.kids_retry),
-                    onAction = onRetry,
-                )
-            state is LoadState.Ready && state.value.isEmpty() ->
-                CenteredMessage(
-                    text = stringResource(R.string.kids_no_playlists),
-                    iconRes = R.drawable.queue_music,
-                    actionLabel = stringResource(R.string.kids_retry),
-                    onAction = onRetry,
-                )
-            state is LoadState.Ready ->
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 150.dp),
-                    contentPadding = PaddingValues(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(state.value, key = { it.id }) { item ->
-                        PlaylistCard(item = item, onClick = { onOpen(item) })
+            when {
+                isLoggedIn == null -> Loading()
+                isLoggedIn == false -> CenteredMessage(stringResource(R.string.kids_ask_parent_setup), R.drawable.account)
+                state is LoadState.Loading -> Loading()
+                state is LoadState.Error ->
+                    CenteredMessage(
+                        text = stringResource(R.string.kids_load_error),
+                        iconRes = R.drawable.error,
+                        actionLabel = stringResource(R.string.kids_retry),
+                        onAction = onRetry,
+                    )
+                state is LoadState.Ready && state.value.isEmpty() ->
+                    CenteredMessage(
+                        text = stringResource(R.string.kids_no_playlists),
+                        iconRes = R.drawable.queue_music,
+                        actionLabel = stringResource(R.string.kids_retry),
+                        onAction = onRetry,
+                    )
+                state is LoadState.Ready ->
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 150.dp),
+                        // Bottom padding keeps the last row clear of the "New playlist" button.
+                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 88.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(state.value, key = { it.id }) { item ->
+                            PlaylistCard(item = item, isOwn = item.id in ownIds, onClick = { onOpen(item) })
+                        }
                     }
-                }
+            }
+        }
+
+        if (isLoggedIn == true && state is LoadState.Ready) {
+            ExtendedFloatingActionButton(
+                onClick = onCreate,
+                icon = { Icon(painterResource(R.drawable.add), contentDescription = null) },
+                text = { Text(stringResource(R.string.kids_new_playlist)) },
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp),
+            )
         }
     }
 }
@@ -348,6 +464,7 @@ private fun PlaylistsScreen(
 @Composable
 private fun PlaylistCard(
     item: PlaylistItem,
+    isOwn: Boolean,
     onClick: () -> Unit,
 ) {
     Column(
@@ -373,11 +490,13 @@ private fun PlaylistCard(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        item.songCountText?.let {
+        val subtitle = if (isOwn) stringResource(R.string.kids_made_by_you) else item.songCountText
+        subtitle?.let {
             Text(
                 text = it,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (isOwn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (isOwn) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
             )
         }
@@ -418,7 +537,11 @@ private fun Artwork(
 private fun PlaylistScreen(
     title: String,
     state: LoadState<PlaylistPage>,
+    isOwn: Boolean,
     currentSongId: String?,
+    onAddSong: (SongItem) -> Unit,
+    onRemoveSong: (SongItem) -> Unit,
+    onDelete: () -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onPlay: (page: PlaylistPage, index: Int, shuffle: Boolean) -> Unit,
@@ -429,6 +552,13 @@ private fun PlaylistScreen(
             navigationIcon = {
                 IconButton(onClick = onBack) {
                     Icon(painterResource(R.drawable.arrow_back), contentDescription = null)
+                }
+            },
+            actions = {
+                if (isOwn) {
+                    IconButton(onClick = onDelete) {
+                        Icon(painterResource(R.drawable.delete), contentDescription = stringResource(R.string.kids_delete_playlist))
+                    }
                 }
             },
         )
@@ -489,11 +619,28 @@ private fun PlaylistScreen(
                         }
                     }
 
+                    if (isOwn && page.songs.isEmpty()) {
+                        item(key = "empty") {
+                            Text(
+                                text = stringResource(R.string.kids_empty_own_playlist),
+                                style = MaterialTheme.typography.bodyLarge,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 32.dp, vertical = 16.dp),
+                            )
+                        }
+                    }
+
                     itemsIndexed(page.songs, key = { index, song -> "${song.id}-$index" }) { index, song ->
                         SongRow(
                             song = song,
                             isCurrent = song.id == currentSongId,
                             onClick = { onPlay(page, index, false) },
+                            onAddToPlaylist = { onAddSong(song) },
+                            onRemove = if (isOwn && song.setVideoId != null) ({ onRemoveSong(song) }) else null,
                         )
                     }
                 }
@@ -510,7 +657,10 @@ private fun SongRow(
     song: SongItem,
     isCurrent: Boolean,
     onClick: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onRemove: (() -> Unit)?,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier =
@@ -539,7 +689,143 @@ private fun SongRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Box {
+            IconButton(onClick = { menuOpen = true }) {
+                Icon(painterResource(R.drawable.more_vert), contentDescription = stringResource(R.string.kids_song_options))
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.kids_add_to_playlist)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.playlist_add), contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        onAddToPlaylist()
+                    },
+                )
+                if (onRemove != null) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.kids_remove_from_playlist)) },
+                        leadingIcon = { Icon(painterResource(R.drawable.remove), contentDescription = null) },
+                        onClick = {
+                            menuOpen = false
+                            onRemove()
+                        },
+                    )
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun PlaylistNameField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onDone: () -> Unit,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { onValueChange(it.take(KidsViewModel.MAX_PLAYLIST_NAME)) },
+        label = { Text(stringResource(R.string.kids_playlist_name)) },
+        singleLine = true,
+        keyboardOptions =
+            KeyboardOptions(
+                capitalization = KeyboardCapitalization.Sentences,
+                imeAction = ImeAction.Done,
+            ),
+        keyboardActions = KeyboardActions(onDone = { onDone() }),
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun CreatePlaylistDialog(
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onCreate: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    val canCreate = name.isNotBlank() && !busy
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(painterResource(R.drawable.add), contentDescription = null) },
+        title = { Text(stringResource(R.string.kids_new_playlist)) },
+        text = { PlaylistNameField(name, { name = it }, onDone = { if (canCreate) onCreate(name) }) },
+        confirmButton = {
+            TextButton(enabled = canCreate, onClick = { onCreate(name) }) { Text(stringResource(R.string.kids_create)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.kids_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun AddToPlaylistDialog(
+    song: SongItem,
+    playlists: List<PlaylistItem>,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onPick: (PlaylistItem) -> Unit,
+    onCreateWithSong: (String) -> Unit,
+) {
+    var creating by remember { mutableStateOf(playlists.isEmpty()) }
+    var name by remember { mutableStateOf("") }
+    val canCreate = name.isNotBlank() && !busy
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(if (creating) R.string.kids_new_playlist else R.string.kids_add_to_playlist),
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (creating) {
+                    if (playlists.isEmpty()) {
+                        Text(stringResource(R.string.kids_no_own_playlists), style = MaterialTheme.typography.bodyMedium)
+                    }
+                    PlaylistNameField(name, { name = it }, onDone = { if (canCreate) onCreateWithSong(name) })
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 320.dp)) {
+                        item(key = "new") {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.kids_new_playlist)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.add), contentDescription = null) },
+                                onClick = { creating = true },
+                            )
+                        }
+                        lazyItems(playlists, key = { it.id }) { target ->
+                            DropdownMenuItem(
+                                text = { Text(target.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingIcon = { Icon(painterResource(R.drawable.queue_music), contentDescription = null) },
+                                enabled = !busy,
+                                onClick = { onPick(target) },
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (creating) {
+                TextButton(enabled = canCreate, onClick = { onCreateWithSong(name) }) {
+                    Text(stringResource(R.string.kids_create))
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.kids_cancel)) }
+        },
+    )
 }
 
 @Composable

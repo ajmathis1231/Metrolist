@@ -1016,4 +1016,22 @@
     <string name="kids_unlock">Unlock</string>
     <string name="kids_cancel">Cancel</string>
     <string name="kids_now_playing">Now playing</string>
+    <string name="kids_new_playlist">New playlist</string>
+    <string name="kids_playlist_name">Playlist name</string>
+    <string name="kids_create">Create</string>
+    <string name="kids_add_to_playlist">Add to a playlist</string>
+    <string name="kids_remove_from_playlist">Remove from this playlist</string>
+    <string name="kids_song_options">Song options</string>
+    <string name="kids_delete_playlist">Delete playlist</string>
+    <string name="kids_delete_playlist_confirm">Delete \u201c%s\u201d? This can\'t be undone.</string>
+    <string name="kids_delete">Delete</string>
+    <string name="kids_made_by_you">Made by you</string>
+    <string name="kids_no_own_playlists">You haven\'t made any playlists yet.</string>
+    <string name="kids_empty_own_playlist">No songs yet. Open one of your other playlists and tap \u22ee on a song to add it here.</string>
+    <string name="kids_playlist_created">Made \u201c%s\u201d</string>
+    <string name="kids_added_to_playlist">Added to \u201c%s\u201d</string>
+    <string name="kids_removed_from_playlist">Song removed</string>
+    <string name="kids_playlist_deleted">Deleted \u201c%s\u201d</string>
+    <string name="kids_playlist_create_failed">Couldn\'t make the playlist. Try again.</string>
+    <string name="kids_playlist_edit_failed">That didn\'t work. Check the internet and try again.</string>
 </resources>
