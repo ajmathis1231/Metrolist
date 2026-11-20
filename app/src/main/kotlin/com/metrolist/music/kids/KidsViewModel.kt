@@ -86,21 +86,6 @@ class KidsViewModel
         private val _busy = MutableStateFlow(false)
         val busy = _busy.asStateFlow()
 
-        private val _diagnostics = MutableStateFlow<String?>(null)
-        val diagnostics = _diagnostics.asStateFlow()
-
-        fun loadDiagnostics(playlistId: String) {
-            viewModelScope.launch {
-                _diagnostics.value = "…"
-                awaitSession()
-                _diagnostics.value = YouTube.playlistDiagnostics(playlistId)
-            }
-        }
-
-        fun clearDiagnostics() {
-            _diagnostics.value = null
-        }
-
         private var loadedPlaylistId: String? = null
         private var playlistJob: Job? = null
 

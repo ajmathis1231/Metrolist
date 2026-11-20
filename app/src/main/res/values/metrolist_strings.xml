@@ -1026,7 +1026,6 @@
     <string name="kids_delete_playlist_confirm">Delete \u201c%s\u201d? This can\'t be undone.</string>
     <string name="kids_delete">Delete</string>
     <string name="kids_empty_playlist">This playlist has no songs yet. Ask a parent to add some.</string>
-    <string name="kids_show_details">Details for a parent</string>
     <string name="kids_made_by_you">Made by you</string>
     <string name="kids_no_own_playlists">You haven\'t made any playlists yet.</string>
     <string name="kids_empty_own_playlist">No songs yet. Open one of your other playlists and tap \u22ee on a song to add it here.</string>

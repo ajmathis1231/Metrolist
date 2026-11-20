@@ -117,7 +117,6 @@ fun KidsApp(
     val playlist by viewModel.playlist.collectAsState()
     val ownIds by viewModel.ownPlaylistIds.collectAsState()
     val busy by viewModel.busy.collectAsState()
-    val diagnostics by viewModel.diagnostics.collectAsState()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -187,7 +186,6 @@ fun KidsApp(
                         onAddSong = { songToAdd = it },
                         onRemoveSong = { viewModel.removeSong(currentId, it) },
                         onDelete = { confirmDelete = true },
-                        onShowDetails = { viewModel.loadDiagnostics(currentId) },
                         onBack = { openPlaylistId = null },
                         onRetry = { viewModel.openPlaylist(currentId, forceReload = true) },
                         onPlay = { page, index, shuffle ->
@@ -280,21 +278,6 @@ fun KidsApp(
                 },
                 dismissButton = {
                     TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.kids_cancel)) }
-                },
-            )
-        }
-
-        diagnostics?.let { text ->
-            AlertDialog(
-                onDismissRequest = viewModel::clearDiagnostics,
-                title = { Text(stringResource(R.string.kids_show_details)) },
-                text = {
-                    androidx.compose.foundation.text.selection.SelectionContainer {
-                        Text(text, style = MaterialTheme.typography.bodySmall)
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = viewModel::clearDiagnostics) { Text(stringResource(R.string.kids_cancel)) }
                 },
             )
         }
@@ -559,7 +542,6 @@ private fun PlaylistScreen(
     onAddSong: (SongItem) -> Unit,
     onRemoveSong: (SongItem) -> Unit,
     onDelete: () -> Unit,
-    onShowDetails: () -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     onPlay: (page: PlaylistPage, index: Int, shuffle: Boolean) -> Unit,
@@ -649,9 +631,6 @@ private fun PlaylistScreen(
                                         .fillMaxWidth()
                                         .padding(horizontal = 32.dp, vertical = 16.dp),
                             )
-                            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                TextButton(onClick = onShowDetails) { Text(stringResource(R.string.kids_show_details)) }
-                            }
                         }
                     }
 

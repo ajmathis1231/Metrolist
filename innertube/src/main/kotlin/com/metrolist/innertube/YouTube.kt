@@ -77,7 +77,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
 import timber.log.Timber
 import java.io.FilterInputStream
 import java.io.InputStream
@@ -1171,46 +1170,6 @@ object YouTube {
                         ?.getContinuation(),
             )
         }
-
-    /**
-     * Short, cookie-free description of what YouTube returned for a playlist browse.
-     * Used by the kids build to diagnose playlists that come back empty.
-     */
-    suspend fun playlistDiagnostics(playlistId: String): String =
-        runCatching {
-            val response = innerTube.browse(client = WEB_REMIX, browseId = "VL$playlistId", setLogin = true)
-            val root = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-            fun keys(element: kotlinx.serialization.json.JsonElement?): String =
-                (element as? kotlinx.serialization.json.JsonObject)?.keys?.joinToString() ?: "-"
-            val contents = root["contents"]?.jsonObject
-            val texts = mutableListOf<String>()
-            fun collectText(element: kotlinx.serialization.json.JsonElement, key: String?) {
-                when (element) {
-                    is kotlinx.serialization.json.JsonObject -> element.forEach { (k, v) -> collectText(v, k) }
-                    is kotlinx.serialization.json.JsonArray -> element.forEach { collectText(it, key) }
-                    is kotlinx.serialization.json.JsonPrimitive ->
-                        if (key == "text" && element.isString && texts.size < 12) texts += element.content
-                }
-            }
-            listOfNotNull(root["alerts"], contents?.get("messageRenderer"), root["header"]).forEach { collectText(it, null) }
-            val twoCol = contents?.get("twoColumnBrowseResultsRenderer")?.jsonObject
-            val secondary =
-                twoCol?.get("secondaryContents")?.jsonObject
-                    ?.get("sectionListRenderer")?.jsonObject
-                    ?.get("contents")
-            val single = contents?.get("singleColumnBrowseResultsRenderer")
-            buildString {
-                appendLine("id: $playlistId")
-                appendLine("http: ${response.status.value}")
-                appendLine("loggedIn: ${!cookie.isNullOrBlank()} dataSyncId: ${!dataSyncId.isNullOrBlank()}")
-                appendLine("root: ${keys(root)}")
-                appendLine("contents: ${keys(contents)}")
-                appendLine("twoCol: ${keys(twoCol)}")
-                appendLine("secondary: ${(secondary as? kotlinx.serialization.json.JsonArray)?.joinToString { keys(it) } ?: "-"}")
-                appendLine("singleCol: ${if (single != null) "yes" else "no"}")
-                if (texts.isNotEmpty()) appendLine("messages: ${texts.joinToString(" | ")}")
-            }
-        }.getOrElse { "id: $playlistId\nerror: ${it::class.simpleName}: ${it.message?.take(300)}" }
 
     suspend fun playlistContinuation(continuation: String): Result<PlaylistContinuationPage> =
         runCatching {
