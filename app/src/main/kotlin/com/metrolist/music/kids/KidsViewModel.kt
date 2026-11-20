@@ -11,31 +11,37 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.metrolist.innertube.YouTube
-import com.metrolist.innertube.models.PlaylistItem
-import com.metrolist.innertube.models.SongItem
-import com.metrolist.innertube.pages.PlaylistPage
-import com.metrolist.innertube.utils.completed
 import com.metrolist.music.R
 import com.metrolist.music.constants.InnerTubeCookieKey
+import com.metrolist.music.db.MusicDatabase
+import com.metrolist.music.db.entities.Playlist
+import com.metrolist.music.db.entities.PlaylistEntity
+import com.metrolist.music.db.entities.PlaylistSong
+import com.metrolist.music.extensions.isSyncEnabled
+import com.metrolist.music.utils.SyncUtils
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.reportException
 import com.metrolist.music.utils.safeDataStoreEdit
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
+import java.time.LocalDateTime
 import javax.inject.Inject
 
 sealed interface LoadState<out T> {
@@ -51,15 +57,43 @@ data class KidsMessage(
     val arg: String? = null,
 )
 
-// Playlists created from the locked screen. Only these can be edited or deleted there;
-// everything else in the library (the parent's playlists) stays read-only.
-private val OwnPlaylistIdsKey = stringSetPreferencesKey("kidsOwnPlaylistIds")
+data class KidsPlaylist(
+    val id: String,
+    val title: String,
+    val thumbnail: String?,
+    val songCount: Int,
+)
 
+data class KidsPlaylistDetail(
+    val playlist: KidsPlaylist,
+    val songs: List<PlaylistSong>,
+)
+
+// Playlists created from the locked screen (local database ids). Only these can be edited
+// or deleted there; everything else (the parent's playlists) stays read-only.
+private val OwnPlaylistIdsKey = stringSetPreferencesKey("kidsOwnLocalPlaylistIds")
+
+private fun Playlist.toKids() =
+    KidsPlaylist(
+        id = id,
+        title = title,
+        thumbnail = thumbnails.firstOrNull(),
+        songCount = songCount,
+    )
+
+/**
+ * The locked screen reads playlists from the app's own database, the same copy parent mode
+ * shows. YouTube's playlist pages can come back empty for supervised accounts even when the
+ * playlist has songs, so they can't be relied on here.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class KidsViewModel
     @Inject
     constructor(
         @ApplicationContext private val context: Context,
+        private val database: MusicDatabase,
+        private val syncUtils: SyncUtils,
     ) : ViewModel() {
         /** null until the stored account state has been read. */
         val isLoggedIn: StateFlow<Boolean?> =
@@ -68,11 +102,29 @@ class KidsViewModel
                 .distinctUntilChanged()
                 .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-        private val _playlists = MutableStateFlow<LoadState<List<PlaylistItem>>>(LoadState.Loading)
-        val playlists = _playlists.asStateFlow()
+        val playlists: StateFlow<LoadState<List<KidsPlaylist>>> =
+            database
+                .playlistsByCreateDateAsc()
+                .map<List<Playlist>, LoadState<List<KidsPlaylist>>> { list -> LoadState.Ready(list.map { it.toKids() }) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LoadState.Loading)
 
-        private val _playlist = MutableStateFlow<LoadState<PlaylistPage>>(LoadState.Loading)
-        val playlist = _playlist.asStateFlow()
+        private val openPlaylistId = MutableStateFlow<String?>(null)
+
+        val playlist: StateFlow<LoadState<KidsPlaylistDetail>> =
+            openPlaylistId
+                .flatMapLatest { id ->
+                    if (id == null) {
+                        flowOf(LoadState.Loading)
+                    } else {
+                        combine(database.playlist(id), database.playlistSongs(id)) { playlist, songs ->
+                            if (playlist == null) {
+                                LoadState.Error
+                            } else {
+                                LoadState.Ready(KidsPlaylistDetail(playlist.toKids(), songs))
+                            }
+                        }
+                    }
+                }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LoadState.Loading)
 
         val ownPlaylistIds: StateFlow<Set<String>> =
             context.dataStore.data
@@ -86,59 +138,14 @@ class KidsViewModel
         private val _busy = MutableStateFlow(false)
         val busy = _busy.asStateFlow()
 
-        private var loadedPlaylistId: String? = null
-        private var playlistJob: Job? = null
-
-        init {
-            viewModelScope.launch {
-                isLoggedIn.collect { loggedIn ->
-                    if (loggedIn == true) loadPlaylists()
-                }
-            }
+        /** Pulls the account's saved playlists down into the database. */
+        fun refresh() {
+            syncUtils.syncSavedPlaylists()
+            syncUtils.syncAutoSyncPlaylists()
         }
 
-        fun loadPlaylists() {
-            viewModelScope.launch {
-                _playlists.value = LoadState.Loading
-                awaitSession()
-                YouTube
-                    .library("FEmusic_liked_playlists")
-                    .completed()
-                    .onSuccess { page ->
-                        _playlists.value =
-                            LoadState.Ready(
-                                page.items
-                                    .filterIsInstance<PlaylistItem>()
-                                    // "SE" is the saved-podcast-episodes list, not music.
-                                    .filterNot { it.id == "SE" || it.isPodcast },
-                            )
-                    }.onFailure {
-                        reportException(it)
-                        _playlists.value = LoadState.Error
-                    }
-            }
-        }
-
-        fun openPlaylist(
-            playlistId: String,
-            forceReload: Boolean = false,
-        ) {
-            if (!forceReload && playlistId == loadedPlaylistId && _playlist.value is LoadState.Ready) return
-            loadedPlaylistId = playlistId
-            playlistJob?.cancel()
-            playlistJob =
-                viewModelScope.launch {
-                    _playlist.value = LoadState.Loading
-                    awaitSession()
-                    YouTube
-                        .playlist(playlistId)
-                        .completed()
-                        .onSuccess { _playlist.value = LoadState.Ready(it) }
-                        .onFailure {
-                            reportException(it)
-                            _playlist.value = LoadState.Error
-                        }
-                }
+        fun openPlaylist(playlistId: String) {
+            openPlaylistId.value = playlistId
         }
 
         private suspend fun isOwn(playlistId: String): Boolean =
@@ -146,129 +153,113 @@ class KidsViewModel
 
         private fun runAction(block: suspend () -> Unit) {
             if (_busy.value) return
+            _busy.value = true
             viewModelScope.launch {
-                _busy.value = true
                 try {
-                    awaitSession()
                     block()
+                } catch (e: Exception) {
+                    reportException(e)
+                    _messages.tryEmit(KidsMessage(R.string.kids_playlist_edit_failed))
                 } finally {
                     _busy.value = false
                 }
             }
         }
 
-        /** Creates a playlist in the signed-in account, optionally adding [firstSong] to it. */
+        /** Creates a playlist (synced to YouTube when possible), optionally adding [firstSongId]. */
         fun createPlaylist(
             title: String,
-            firstSong: SongItem? = null,
+            firstSongId: String? = null,
         ) {
             val name = title.trim().take(MAX_PLAYLIST_NAME)
-            if (name.isEmpty()) return
-            runAction {
-                val playlistId =
-                    runCatching { YouTube.createPlaylist(name) }
-                        .onFailure(::reportException)
-                        .getOrNull()
-                if (playlistId.isNullOrBlank()) {
-                    _messages.tryEmit(KidsMessage(R.string.kids_playlist_create_failed))
-                    return@runAction
-                }
-                context.safeDataStoreEdit { it[OwnPlaylistIdsKey] = it[OwnPlaylistIdsKey].orEmpty() + playlistId }
-
-                val current = (_playlists.value as? LoadState.Ready)?.value.orEmpty()
-                _playlists.value =
-                    LoadState.Ready(
-                        listOf(
-                            PlaylistItem(
-                                id = playlistId,
-                                title = name,
-                                author = null,
-                                songCountText = null,
-                                thumbnail = firstSong?.thumbnail,
-                                playEndpoint = null,
-                                shuffleEndpoint = null,
-                                radioEndpoint = null,
-                                isEditable = true,
-                            ),
-                        ) + current.filterNot { it.id == playlistId },
-                    )
-
-                if (firstSong != null) {
-                    addSongNow(playlistId, name, firstSong)
-                } else {
-                    _messages.tryEmit(KidsMessage(R.string.kids_playlist_created, name))
+            if (name.isEmpty() || _busy.value) return
+            _busy.value = true
+            viewModelScope.launch {
+                val sync = withContext(Dispatchers.IO) { context.isSyncEnabled() }
+                syncUtils.createPlaylist(
+                    playlist =
+                        PlaylistEntity(
+                            name = name,
+                            bookmarkedAt = LocalDateTime.now(),
+                            isEditable = true,
+                        ),
+                    syncWithYouTube = sync,
+                ) { playlistId, _ ->
+                    viewModelScope.launch {
+                        try {
+                            context.safeDataStoreEdit {
+                                it[OwnPlaylistIdsKey] = it[OwnPlaylistIdsKey].orEmpty() + playlistId
+                            }
+                            if (firstSongId != null) {
+                                addSongNow(playlistId, firstSongId)
+                            } else {
+                                _messages.tryEmit(KidsMessage(R.string.kids_playlist_created, name))
+                            }
+                        } catch (e: Exception) {
+                            reportException(e)
+                            _messages.tryEmit(KidsMessage(R.string.kids_playlist_edit_failed))
+                        } finally {
+                            _busy.value = false
+                        }
+                    }
                 }
             }
         }
 
         fun addSong(
             playlistId: String,
-            playlistTitle: String,
-            song: SongItem,
-        ) = runAction { addSongNow(playlistId, playlistTitle, song) }
+            songId: String,
+        ) = runAction { addSongNow(playlistId, songId) }
 
         private suspend fun addSongNow(
             playlistId: String,
-            playlistTitle: String,
-            song: SongItem,
+            songId: String,
         ) {
             if (!isOwn(playlistId)) return
-            YouTube
-                .addToPlaylist(playlistId, song.id)
-                .onSuccess {
-                    _messages.tryEmit(KidsMessage(R.string.kids_added_to_playlist, playlistTitle))
-                    if (playlistId == loadedPlaylistId) openPlaylist(playlistId, forceReload = true)
-                }.onFailure {
-                    reportException(it)
-                    _messages.tryEmit(KidsMessage(R.string.kids_playlist_edit_failed))
+            val target = database.playlist(playlistId).first() ?: return
+            withContext(Dispatchers.IO) {
+                if (database.playlistDuplicates(playlistId, listOf(songId)).isNotEmpty()) {
+                    _messages.tryEmit(KidsMessage(R.string.kids_already_in_playlist, target.title))
+                    return@withContext
                 }
+                database.addSongsToPlaylist(target, listOf(songId to null))
+                target.playlist.browseId?.let { syncUtils.scheduleAddToPlaylist(it, target.id, listOf(songId)) }
+                _messages.tryEmit(KidsMessage(R.string.kids_added_to_playlist, target.title))
+            }
         }
 
         fun removeSong(
             playlistId: String,
-            song: SongItem,
+            song: PlaylistSong,
         ) = runAction {
-            val setVideoId = song.setVideoId
-            if (!isOwn(playlistId) || setVideoId == null) return@runAction
-            YouTube
-                .removeFromPlaylist(playlistId, song.id, setVideoId)
-                .onSuccess {
-                    _messages.tryEmit(KidsMessage(R.string.kids_removed_from_playlist))
-                    openPlaylist(playlistId, forceReload = true)
-                }.onFailure {
-                    reportException(it)
-                    _messages.tryEmit(KidsMessage(R.string.kids_playlist_edit_failed))
-                }
+            if (!isOwn(playlistId)) return@runAction
+            val browseId = database.playlist(playlistId).first()?.playlist?.browseId
+            val map = song.map
+            database.transaction {
+                move(map.playlistId, map.position, Int.MAX_VALUE)
+                delete(map.copy(position = Int.MAX_VALUE))
+            }
+            if (browseId != null) {
+                syncUtils.scheduleRemoveFromPlaylist(browseId, map.songId, map.playlistId) { map.setVideoId }
+            }
+            _messages.tryEmit(KidsMessage(R.string.kids_removed_from_playlist))
         }
 
         fun deletePlaylist(
             playlistId: String,
-            playlistTitle: String,
             onDeleted: () -> Unit,
         ) = runAction {
             if (!isOwn(playlistId)) return@runAction
-            YouTube
-                .deletePlaylist(playlistId)
-                .onSuccess {
-                    context.safeDataStoreEdit { it[OwnPlaylistIdsKey] = it[OwnPlaylistIdsKey].orEmpty() - playlistId }
-                    (_playlists.value as? LoadState.Ready)?.let { ready ->
-                        _playlists.value = LoadState.Ready(ready.value.filterNot { it.id == playlistId })
-                    }
-                    if (loadedPlaylistId == playlistId) loadedPlaylistId = null
-                    _messages.tryEmit(KidsMessage(R.string.kids_playlist_deleted, playlistTitle))
-                    onDeleted()
-                }.onFailure {
-                    reportException(it)
-                    _messages.tryEmit(KidsMessage(R.string.kids_playlist_edit_failed))
+            val target = database.playlist(playlistId).first() ?: return@runAction
+            database.query { delete(target.playlist) }
+            target.playlist.browseId?.let { browseId ->
+                viewModelScope.launch(Dispatchers.IO) {
+                    YouTube.deletePlaylist(browseId).onFailure(::reportException)
                 }
-        }
-
-        // App applies the saved cookie to YouTube asynchronously at startup; requests made
-        // before that would come back as a signed-out user with an empty library.
-        private suspend fun awaitSession() {
-            withTimeoutOrNull(5_000) {
-                while (YouTube.cookie.isNullOrBlank()) delay(100)
             }
+            context.safeDataStoreEdit { it[OwnPlaylistIdsKey] = it[OwnPlaylistIdsKey].orEmpty() - playlistId }
+            _messages.tryEmit(KidsMessage(R.string.kids_playlist_deleted, target.title))
+            onDeleted()
         }
 
         companion object {

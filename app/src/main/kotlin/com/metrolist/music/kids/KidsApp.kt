@@ -88,14 +88,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.media3.common.Player
 import coil3.compose.AsyncImage
-import com.metrolist.innertube.models.PlaylistItem
-import com.metrolist.innertube.models.SongItem
-import com.metrolist.innertube.pages.PlaylistPage
+import com.metrolist.music.db.entities.PlaylistSong
+import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.R
 import com.metrolist.music.extensions.toggleRepeatMode
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.playback.PlayerConnection
-import com.metrolist.music.playback.queues.YouTubePlaylistQueue
+import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.ui.utils.resize
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -137,7 +136,7 @@ fun KidsApp(
     var showNowPlaying by rememberSaveable { mutableStateOf(false) }
     var showParentGate by remember { mutableStateOf(false) }
     var showCreateDialog by remember { mutableStateOf(false) }
-    var songToAdd by remember { mutableStateOf<SongItem?>(null) }
+    var songToAdd by remember { mutableStateOf<PlaylistSong?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     val ownPlaylists =
         (playlists as? LoadState.Ready)?.value.orEmpty().filter { it.id in ownIds }
@@ -167,7 +166,7 @@ fun KidsApp(
                     PlaylistsScreen(
                         isLoggedIn = isLoggedIn,
                         state = playlists,
-                        onRetry = viewModel::loadPlaylists,
+                        onRetry = viewModel::refresh,
                         ownIds = ownIds,
                         onOpen = {
                             openPlaylistTitle = it.title
@@ -187,7 +186,7 @@ fun KidsApp(
                         onRemoveSong = { viewModel.removeSong(currentId, it) },
                         onDelete = { confirmDelete = true },
                         onBack = { openPlaylistId = null },
-                        onRetry = { viewModel.openPlaylist(currentId, forceReload = true) },
+                        onRetry = { viewModel.openPlaylist(currentId) },
                         onPlay = { page, index, shuffle ->
                             playerConnection?.let { playPlaylist(it, page, index, shuffle) }
                         },
@@ -247,11 +246,11 @@ fun KidsApp(
                 busy = busy,
                 onDismiss = { songToAdd = null },
                 onPick = { target ->
-                    viewModel.addSong(target.id, target.title, song)
+                    viewModel.addSong(target.id, song.map.songId)
                     songToAdd = null
                 },
                 onCreateWithSong = { name ->
-                    viewModel.createPlaylist(name, firstSong = song)
+                    viewModel.createPlaylist(name, firstSongId = song.map.songId)
                     songToAdd = null
                 },
             )
@@ -270,7 +269,7 @@ fun KidsApp(
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
                         onClick = {
                             confirmDelete = false
-                            viewModel.deletePlaylist(deletingId, openPlaylistTitle) {
+                            viewModel.deletePlaylist(deletingId) {
                                 if (openPlaylistId == deletingId) openPlaylistId = null
                             }
                         },
@@ -296,17 +295,16 @@ fun KidsApp(
 
 private fun playPlaylist(
     playerConnection: PlayerConnection,
-    page: PlaylistPage,
+    page: KidsPlaylistDetail,
     startIndex: Int,
     shuffle: Boolean,
 ) {
     if (page.songs.isEmpty()) return
+    val songs = if (shuffle) page.songs.shuffled() else page.songs
     playerConnection.playQueue(
-        YouTubePlaylistQueue(
-            playlistId = page.playlist.id,
-            playlistTitle = page.playlist.title,
-            initialSongs = if (shuffle) page.songs.shuffled() else page.songs,
-            initialContinuation = null,
+        ListQueue(
+            title = page.playlist.title,
+            items = songs.map { it.song.toMediaItem() },
             startIndex = if (shuffle) 0 else startIndex,
         ),
     )
@@ -390,10 +388,10 @@ private fun Loading() {
 @Composable
 private fun PlaylistsScreen(
     isLoggedIn: Boolean?,
-    state: LoadState<List<PlaylistItem>>,
+    state: LoadState<List<KidsPlaylist>>,
     ownIds: Set<String>,
     onRetry: () -> Unit,
-    onOpen: (PlaylistItem) -> Unit,
+    onOpen: (KidsPlaylist) -> Unit,
     onCreate: () -> Unit,
     onParentMode: () -> Unit,
 ) {
@@ -463,7 +461,7 @@ private fun PlaylistsScreen(
 
 @Composable
 private fun PlaylistCard(
-    item: PlaylistItem,
+    item: KidsPlaylist,
     isOwn: Boolean,
     onClick: () -> Unit,
 ) {
@@ -490,7 +488,7 @@ private fun PlaylistCard(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        val subtitle = if (isOwn) stringResource(R.string.kids_made_by_you) else item.songCountText
+        val subtitle = if (isOwn) stringResource(R.string.kids_made_by_you) else pluralCount(item.songCount)
         subtitle?.let {
             Text(
                 text = it,
@@ -536,15 +534,15 @@ private fun Artwork(
 @Composable
 private fun PlaylistScreen(
     title: String,
-    state: LoadState<PlaylistPage>,
+    state: LoadState<KidsPlaylistDetail>,
     isOwn: Boolean,
     currentSongId: String?,
-    onAddSong: (SongItem) -> Unit,
-    onRemoveSong: (SongItem) -> Unit,
+    onAddSong: (PlaylistSong) -> Unit,
+    onRemoveSong: (PlaylistSong) -> Unit,
     onDelete: () -> Unit,
     onBack: () -> Unit,
     onRetry: () -> Unit,
-    onPlay: (page: PlaylistPage, index: Int, shuffle: Boolean) -> Unit,
+    onPlay: (page: KidsPlaylistDetail, index: Int, shuffle: Boolean) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         TopBar(
@@ -634,13 +632,13 @@ private fun PlaylistScreen(
                         }
                     }
 
-                    itemsIndexed(page.songs, key = { index, song -> "${song.id}-$index" }) { index, song ->
+                    itemsIndexed(page.songs, key = { _, song -> song.map.id }) { index, song ->
                         SongRow(
                             song = song,
-                            isCurrent = song.id == currentSongId,
+                            isCurrent = song.map.songId == currentSongId,
                             onClick = { onPlay(page, index, false) },
                             onAddToPlaylist = { onAddSong(song) },
-                            onRemove = if (isOwn && song.setVideoId != null) ({ onRemoveSong(song) }) else null,
+                            onRemove = if (isOwn) ({ onRemoveSong(song) }) else null,
                         )
                     }
                 }
@@ -654,7 +652,7 @@ private fun pluralCount(count: Int): String = stringResource(R.string.kids_song_
 
 @Composable
 private fun SongRow(
-    song: SongItem,
+    song: PlaylistSong,
     isCurrent: Boolean,
     onClick: () -> Unit,
     onAddToPlaylist: () -> Unit,
@@ -671,18 +669,18 @@ private fun SongRow(
                     if (isCurrent) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.background,
                 ).padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
-        Artwork(url = song.thumbnail.resize(120, 120), modifier = Modifier.size(52.dp))
+        Artwork(url = song.song.song.thumbnailUrl?.resize(120, 120), modifier = Modifier.size(52.dp))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = song.title,
+                text = song.song.song.title,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = song.artists.joinToString { it.name },
+                text = song.song.orderedArtists.joinToString { it.name },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -762,11 +760,11 @@ private fun CreatePlaylistDialog(
 
 @Composable
 private fun AddToPlaylistDialog(
-    song: SongItem,
-    playlists: List<PlaylistItem>,
+    song: PlaylistSong,
+    playlists: List<KidsPlaylist>,
     busy: Boolean,
     onDismiss: () -> Unit,
-    onPick: (PlaylistItem) -> Unit,
+    onPick: (KidsPlaylist) -> Unit,
     onCreateWithSong: (String) -> Unit,
 ) {
     var creating by remember { mutableStateOf(playlists.isEmpty()) }
@@ -783,7 +781,7 @@ private fun AddToPlaylistDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = song.title,
+                    text = song.song.song.title,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
