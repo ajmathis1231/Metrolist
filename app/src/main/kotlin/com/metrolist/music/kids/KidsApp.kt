@@ -619,10 +619,10 @@ private fun PlaylistScreen(
                         }
                     }
 
-                    if (isOwn && page.songs.isEmpty()) {
+                    if (page.songs.isEmpty()) {
                         item(key = "empty") {
                             Text(
-                                text = stringResource(R.string.kids_empty_own_playlist),
+                                text = stringResource(if (isOwn) R.string.kids_empty_own_playlist else R.string.kids_empty_playlist),
                                 style = MaterialTheme.typography.bodyLarge,
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,

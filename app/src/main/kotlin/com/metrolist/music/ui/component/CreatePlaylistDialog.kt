@@ -46,11 +46,13 @@ fun CreatePlaylistDialog(
 ) {
     val syncUtils = LocalSyncUtils.current
     val coroutineScope = rememberCoroutineScope()
-    var syncedPlaylist by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     val innerTubeCookie by rememberPreference(InnerTubeCookieKey, "")
     val isSignedIn = innerTubeCookie.isNotEmpty()
+    // Kids build: the locked screen only shows playlists stored in the YouTube account,
+    // so new playlists sync to YouTube by default.
+    var syncedPlaylist by remember(isSignedIn) { mutableStateOf(allowSyncing && isSignedIn && context.isSyncEnabled()) }
 
     val notLoggedInYoutubeStr = stringResource(R.string.not_logged_in_youtube)
     val syncDisabledStr = stringResource(R.string.sync_disabled)
