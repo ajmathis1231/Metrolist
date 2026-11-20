@@ -1,0 +1,10 @@
+name: Debug playlist browse
+on:
+  push:
+    branches: ["kids-debug"]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 .github/debug_playlist.py
